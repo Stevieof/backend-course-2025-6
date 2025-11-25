@@ -1,5 +1,16 @@
 // Лабораторна робота №6: Створення сервісу інвентаризації
-// Коміт 4: реалізація інвентаря, фото, HTML-форм, /search, 405.
+//
+// CLI-параметри (обов'язкові):
+//   -h, --host   – хост сервера
+//   -p, --port   – порт сервера
+//   -c, --cache  – директорія для зберігання фото (кеш)
+//
+// Технології (як в методичці):
+//   - node:http як HTTP-сервер
+//   - express як роутер/обробник
+//   - commander для CLI
+//   - multer для multipart/form-data (фото)
+//   - swagger-ui-express для /docs
 
 const http = require("http");
 const path = require("path");
@@ -7,6 +18,7 @@ const fs = require("fs");
 const express = require("express");
 const multer = require("multer");
 const { Command } = require("commander");
+const swaggerUi = require("swagger-ui-express");
 
 // =======================
 // 1. CLI через commander
@@ -41,7 +53,7 @@ fs.mkdirSync(CACHE_DIR, { recursive: true });
 const app = express();
 const ROOT_DIR = __dirname;
 
-// підтримка JSON та x-www-form-urlencoded
+// для JSON та x-www-form-urlencoded
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
@@ -78,6 +90,9 @@ function buildItemDto(item) {
 // =======================
 // 6. 405 Method Not Allowed
 // =======================
+//
+// Цей middleware перевіряє шлях і дозволені методи.
+// Якщо метод не входить у дозволені – повертає 405 + Allow.
 
 app.use((req, res, next) => {
     const p = req.path;
@@ -91,7 +106,8 @@ app.use((req, res, next) => {
     else if (p === "/RegisterForm.html") allowed = ["GET"];
     else if (p === "/SearchForm.html") allowed = ["GET"];
     else if (p === "/search") allowed = ["POST"];
-    else return next(); // інші шляхи йдуть далі (до 404)
+    else if (p === "/docs") allowed = ["GET"]; // swagger
+    else return next(); // не наш маршрут – йдемо далі (до 404)
 
     if (!allowed.includes(m)) {
         res.set("Allow", allowed.join(", "));
@@ -116,6 +132,11 @@ app.get("/SearchForm.html", (req, res) => {
 // =======================
 // 8. POST /register
 // =======================
+//
+// Приймає multipart/form-data:
+//   inventory_name (обов'язкове)
+//   description
+//   photo (файл)
 
 app.post(
     "/register",
@@ -168,6 +189,8 @@ app.get("/inventory/:id", (req, res) => {
 // =======================
 // 11. PUT /inventory/:id
 // =======================
+//
+// Оновлюємо name/description (JSON)
 
 app.put("/inventory/:id", (req, res) => {
     const id = String(req.params.id);
@@ -214,6 +237,8 @@ app.get("/inventory/:id/photo", (req, res) => {
 // =======================
 // 13. PUT /inventory/:id/photo
 // =======================
+//
+// Оновлення фото для існуючого запису
 
 app.put(
     "/inventory/:id/photo",
@@ -230,7 +255,7 @@ app.put(
             return res.status(400).send("Bad Request: photo is required");
         }
 
-        // видаляємо старе фото, якщо було
+        // видаляємо старий файл, якщо був
         if (item.photoFileName) {
             const oldPath = path.join(CACHE_DIR, item.photoFileName);
             fs.unlink(oldPath, () => {});
@@ -267,6 +292,12 @@ app.delete("/inventory/:id", (req, res) => {
 // =======================
 // 15. POST /search
 // =======================
+//
+// Приймає x-www-form-urlencoded:
+//   id
+//   has_photo (on / undefined)
+//
+// Повертає текстовий опис елемента.
 
 app.post("/search", (req, res) => {
     const { id, has_photo } = req.body;
@@ -286,7 +317,187 @@ app.post("/search", (req, res) => {
 });
 
 // =======================
-// 16. 404 за замовчуванням
+// 16. Swagger /docs
+// =======================
+
+const swaggerDocument = {
+    openapi: "3.0.0",
+    info: {
+        title: "Inventory Service API",
+        version: "1.0.0",
+    },
+    paths: {
+        "/register": {
+            post: {
+                summary: "Register new inventory item",
+                requestBody: {
+                    required: true,
+                    content: {
+                        "multipart/form-data": {
+                            schema: {
+                                type: "object",
+                                properties: {
+                                    inventory_name: { type: "string" },
+                                    description: { type: "string" },
+                                    photo: { type: "string", format: "binary" },
+                                },
+                                required: ["inventory_name"],
+                            },
+                        },
+                    },
+                },
+                responses: {
+                    "201": { description: "Created" },
+                    "400": { description: "Bad Request" },
+                },
+            },
+        },
+        "/inventory": {
+            get: {
+                summary: "List all inventory items",
+                responses: {
+                    "200": { description: "OK" },
+                },
+            },
+        },
+        "/inventory/{id}": {
+            get: {
+                summary: "Get inventory item by ID",
+                parameters: [
+                    {
+                        name: "id",
+                        in: "path",
+                        schema: { type: "string" },
+                        required: true,
+                    },
+                ],
+                responses: {
+                    "200": { description: "OK" },
+                    "404": { description: "Not Found" },
+                },
+            },
+            put: {
+                summary: "Update inventory item",
+                parameters: [
+                    {
+                        name: "id",
+                        in: "path",
+                        schema: { type: "string" },
+                        required: true,
+                    },
+                ],
+                requestBody: {
+                    required: true,
+                    content: {
+                        "application/json": {
+                            schema: {
+                                type: "object",
+                                properties: {
+                                    name: { type: "string" },
+                                    description: { type: "string" },
+                                },
+                            },
+                        },
+                    },
+                },
+                responses: {
+                    "200": { description: "OK" },
+                    "404": { description: "Not Found" },
+                },
+            },
+            delete: {
+                summary: "Delete inventory item",
+                parameters: [
+                    {
+                        name: "id",
+                        in: "path",
+                        schema: { type: "string" },
+                        required: true,
+                    },
+                ],
+                responses: {
+                    "200": { description: "OK" },
+                    "404": { description: "Not Found" },
+                },
+            },
+        },
+        "/inventory/{id}/photo": {
+            get: {
+                summary: "Get inventory item photo",
+                parameters: [
+                    {
+                        name: "id",
+                        in: "path",
+                        schema: { type: "string" },
+                        required: true,
+                    },
+                ],
+                responses: {
+                    "200": { description: "OK" },
+                    "404": { description: "Not Found" },
+                },
+            },
+            put: {
+                summary: "Update inventory item photo",
+                parameters: [
+                    {
+                        name: "id",
+                        in: "path",
+                        schema: { type: "string" },
+                        required: true,
+                    },
+                ],
+                requestBody: {
+                    required: true,
+                    content: {
+                        "multipart/form-data": {
+                            schema: {
+                                type: "object",
+                                properties: {
+                                    photo: { type: "string", format: "binary" },
+                                },
+                                required: ["photo"],
+                            },
+                        },
+                    },
+                },
+                responses: {
+                    "200": { description: "OK" },
+                    "404": { description: "Not Found" },
+                },
+            },
+        },
+        "/search": {
+            post: {
+                summary: "Search inventory item via form",
+                requestBody: {
+                    required: true,
+                    content: {
+                        "application/x-www-form-urlencoded": {
+                            schema: {
+                                type: "object",
+                                properties: {
+                                    id: { type: "string" },
+                                    has_photo: { type: "string" },
+                                },
+                                required: ["id"],
+                            },
+                        },
+                    },
+                },
+                responses: {
+                    "200": { description: "OK" },
+                    "404": { description: "Not Found" },
+                },
+            },
+        },
+    },
+};
+
+app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+
+// =======================
+// 17. 404 за замовчуванням
 // =======================
 
 app.use((req, res) => {
@@ -294,7 +505,7 @@ app.use((req, res) => {
 });
 
 // =======================
-// 17. Старт node:http сервера
+// 18. Старт node:http сервера
 // =======================
 
 const server = http.createServer(app);
