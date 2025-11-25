@@ -1,4 +1,9 @@
-node_modules/
-cache/
+node_modules
+npm-debug.log
+Dockerfile
+docker-compose.yml
+.git
+.gitignore
+cache
 .DS_Store
 .env
